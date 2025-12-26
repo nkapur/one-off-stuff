@@ -1,0 +1,76 @@
+# =============================================================================
+# Kinesis Event Infrastructure Configuration
+# =============================================================================
+# This file defines your event streams and consumers.
+# Run: python generate.py config.yaml > main.tf && terraform apply
+# =============================================================================
+
+environment: dev
+region: us-west-2
+
+# API Gateway configuration
+api_gateway:
+  name: events-ingestion
+  stage: v1
+  throttling_rate_limit: 10000
+  throttling_burst_limit: 5000
+
+# Define your Kinesis streams
+streams:
+  user_activity:
+    shards: 1
+    retention_hours: 24
+    
+  orders:
+    shards: 2
+    retention_hours: 48
+    
+  payments:
+    shards: 2
+    retention_hours: 168  # 7 days for compliance
+    enhanced_monitoring: true
+
+# Define your Lambda consumers
+consumers:
+  # Primary processors (1:1 with streams)
+  user_activity_processor:
+    source: lambda/user_activity
+    stream: user_activity
+    memory: 256
+    timeout: 30
+    batch_size: 100
+    
+  orders_processor:
+    source: lambda/orders
+    stream: orders
+    memory: 512
+    timeout: 60
+    batch_size: 50
+    env:
+      ENABLE_ORDER_ALERTS: "true"
+    
+  payments_processor:
+    source: lambda/payments
+    stream: payments
+    memory: 512
+    timeout: 30
+    batch_size: 25
+    
+  # Multi-stream consumer
+  analytics_aggregator:
+    source: lambda/analytics_aggregator
+    streams:  # Multiple streams
+      - user_activity
+      - payments
+    memory: 512
+    timeout: 60
+    batch_size: 100
+    
+  # Additional consumer on existing stream
+  fraud_detector:
+    source: lambda/fraud_detector
+    stream: payments
+    memory: 256
+    timeout: 30
+    batch_size: 10
+

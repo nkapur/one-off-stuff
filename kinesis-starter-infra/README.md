@@ -2,6 +2,80 @@
 
 A modular Terraform infrastructure for building scalable, zero-scaled event processing pipelines using AWS Kinesis Data Streams.
 
+## Quick Start (YAML Config)
+
+Define your infrastructure in `config.yaml`:
+
+```yaml
+environment: dev
+region: us-west-2
+
+streams:
+  user_activity:
+    shards: 1
+    retention_hours: 24
+    
+  payments:
+    shards: 2
+    retention_hours: 168
+    enhanced_monitoring: true
+
+consumers:
+  # Single stream consumer
+  payments_processor:
+    source: lambda/payments
+    stream: payments
+    memory: 512
+    batch_size: 25
+    
+  # Multi-stream consumer (reads from multiple streams)
+  analytics_aggregator:
+    source: lambda/analytics_aggregator
+    streams:
+      - user_activity
+      - payments
+    memory: 512
+```
+
+Generate and deploy:
+
+```bash
+# Install dependencies
+pip install pyyaml
+
+# Generate Terraform for an environment
+python generate.py config.yaml dev      # Creates __generated__/dev/main.tf
+python generate.py config.yaml staging  # Creates __generated__/staging/main.tf  
+python generate.py config.yaml prod     # Creates __generated__/prod/main.tf
+
+# Deploy
+cd __generated__/dev
+terraform init
+terraform apply
+```
+
+### Adding a New Event Type
+
+1. Add stream and consumer to `config.yaml`:
+   ```yaml
+   streams:
+     notifications:
+       shards: 1
+
+   consumers:
+     notifications_processor:
+       source: lambda/notifications
+       stream: notifications
+   ```
+
+2. Create Lambda handler at `lambda/notifications/handler.py`
+
+3. Regenerate and apply:
+   ```bash
+   python generate.py config.yaml dev
+   cd __generated__/dev && terraform apply
+   ```
+
 ## Architecture Overview
 
 ```
