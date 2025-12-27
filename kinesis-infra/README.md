@@ -2,6 +2,36 @@
 
 A modular Terraform infrastructure for building scalable, zero-scaled event processing pipelines using AWS Kinesis Data Streams.
 
+## Repository Structure
+
+```
+repo-root/
+├── kinesis-infra/               # Shared platform
+│   ├── generate.py              # YAML → Terraform generator
+│   ├── requirements.txt         # Python dependencies (pyyaml)
+│   └── modules/                 # Shared Terraform modules
+│       ├── kinesis_event_flow/  # Stream + Lambda consumer
+│       └── api_gateway/         # Unified API Gateway
+│
+└── ecommerce-events-kinesis/    # Example project (sibling folder)
+    ├── config.yaml
+    ├── lambda/
+    └── __generated__/
+```
+
+## Quick Start
+
+```bash
+cd ecommerce-events-kinesis
+
+# Generate Terraform
+python ../kinesis-infra/generate.py config.yaml dev
+
+# Deploy
+cd __generated__/dev
+terraform init && terraform apply
+```
+
 ## Quick Start (YAML Config)
 
 Define your infrastructure in `config.yaml`:
@@ -43,10 +73,10 @@ Generate and deploy:
 # Install dependencies
 pip install pyyaml
 
-# Generate Terraform for an environment
-python generate.py config.yaml dev      # Creates __generated__/dev/main.tf
-python generate.py config.yaml staging  # Creates __generated__/staging/main.tf  
-python generate.py config.yaml prod     # Creates __generated__/prod/main.tf
+# From your project directory, generate Terraform
+python ../kinesis-infra/generate.py config.yaml dev      # Creates __generated__/dev/main.tf
+python ../kinesis-infra/generate.py config.yaml staging  # Creates __generated__/staging/main.tf  
+python ../kinesis-infra/generate.py config.yaml prod     # Creates __generated__/prod/main.tf
 
 # Deploy
 cd __generated__/dev
@@ -72,7 +102,7 @@ terraform apply
 
 3. Regenerate and apply:
    ```bash
-   python generate.py config.yaml dev
+   python ../kinesis-infra/generate.py config.yaml dev
    cd __generated__/dev && terraform apply
    ```
 

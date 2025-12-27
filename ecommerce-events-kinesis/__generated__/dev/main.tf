@@ -1,7 +1,7 @@
 # =============================================================================
 # Generated Kinesis Event Infrastructure - DEV
-# DO NOT EDIT - Generated from config.yaml
-# Regenerate with: python generate.py config.yaml dev
+# Project: ecommerce-events-kinesis
+# DO NOT EDIT - Regenerate with: python <platform>/generate.py config.yaml dev
 # =============================================================================
 
 terraform {
@@ -21,7 +21,7 @@ terraform {
   # Uncomment for remote state
   # backend "s3" {
   #   bucket         = "your-tfstate-bucket"
-  #   key            = "kinesis-events/dev/terraform.tfstate"
+  #   key            = "ecommerce-events-kinesis/dev/terraform.tfstate"
   #   region         = "us-west-2"
   #   encrypt        = true
   #   dynamodb_table = "terraform-locks"
@@ -33,7 +33,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "kinesis-event-ingestion"
+      Project     = "ecommerce-events-kinesis"
       ManagedBy   = "terraform"
       Environment = "dev"
     }
@@ -53,7 +53,7 @@ data "aws_region" "current" {}
 # =============================================================================
 
 module "user_activity_events" {
-  source = "../../modules/kinesis_event_flow"
+  source = "../../../kinesis-infra/modules/kinesis_event_flow"
 
   event_type  = "user_activity"
   environment = var.environment
@@ -88,7 +88,7 @@ module "user_activity_events" {
 # =============================================================================
 
 module "orders_events" {
-  source = "../../modules/kinesis_event_flow"
+  source = "../../../kinesis-infra/modules/kinesis_event_flow"
 
   event_type  = "orders"
   environment = var.environment
@@ -126,7 +126,7 @@ module "orders_events" {
 # =============================================================================
 
 module "payments_events" {
-  source = "../../modules/kinesis_event_flow"
+  source = "../../../kinesis-infra/modules/kinesis_event_flow"
 
   event_type  = "payments"
   environment = var.environment
@@ -421,7 +421,7 @@ resource "aws_lambda_event_source_mapping" "fraud_detector_payments" {
 # =============================================================================
 
 module "api_gateway" {
-  source = "../../modules/api_gateway"
+  source = "../../../kinesis-infra/modules/api_gateway"
 
   name        = "events-ingestion"
   environment = var.environment

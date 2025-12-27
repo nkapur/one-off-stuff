@@ -2,12 +2,16 @@
 """
 Kinesis Infrastructure Generator
 
-Reads a YAML config and generates Terraform configuration using the kinesis_event_flow module.
+Reads a YAML config from a customer project and generates Terraform configuration
+using the shared kinesis_event_flow and api_gateway modules.
 
-Usage:
-    python generate.py config.yaml dev
-    python generate.py config.yaml prod
-    python generate.py config.yaml staging --dry-run
+Usage (from customer project directory):
+    python ../kinesis-infra/generate.py config.yaml dev
+    python ../kinesis-infra/generate.py config.yaml prod
+    
+Example:
+    cd ecommerce-events-kinesis
+    python ../kinesis-infra/generate.py config.yaml dev
 """
 
 import argparse
@@ -18,14 +22,29 @@ from pathlib import Path
 import yaml
 
 
-def generate_header(config: dict, env: str) -> str:
+def compute_relative_path(from_path: Path, to_path: Path) -> str:
+    """Compute relative path from one location to another."""
+    # Resolve to absolute paths
+    from_abs = from_path.resolve()
+    to_abs = to_path.resolve()
+    
+    # Compute relative path
+    try:
+        rel = os.path.relpath(to_abs, from_abs)
+        return rel
+    except ValueError:
+        # Different drives on Windows
+        return str(to_abs)
+
+
+def generate_header(config: dict, env: str, project_name: str) -> str:
     """Generate Terraform header with providers."""
     region = config.get('region', 'us-east-1')
     
     return f'''# =============================================================================
 # Generated Kinesis Event Infrastructure - {env.upper()}
-# DO NOT EDIT - Generated from config.yaml
-# Regenerate with: python generate.py config.yaml {env}
+# Project: {project_name}
+# DO NOT EDIT - Regenerate with: python <platform>/generate.py config.yaml {env}
 # =============================================================================
 
 terraform {{
@@ -45,7 +64,7 @@ terraform {{
   # Uncomment for remote state
   # backend "s3" {{
   #   bucket         = "your-tfstate-bucket"
-  #   key            = "kinesis-events/{env}/terraform.tfstate"
+  #   key            = "{project_name}/{env}/terraform.tfstate"
   #   region         = "{region}"
   #   encrypt        = true
   #   dynamodb_table = "terraform-locks"
@@ -57,7 +76,7 @@ provider "aws" {{
 
   default_tags {{
     tags = {{
-      Project     = "kinesis-event-ingestion"
+      Project     = "{project_name}"
       ManagedBy   = "terraform"
       Environment = "{env}"
     }}
@@ -73,7 +92,14 @@ data "aws_region" "current" {{}}
 '''
 
 
-def generate_stream_module(stream_name: str, stream_cfg: dict, consumer_cfg: dict, env: str) -> str:
+def generate_stream_module(
+    stream_name: str, 
+    stream_cfg: dict, 
+    consumer_cfg: dict, 
+    env: str,
+    platform_modules_relpath: str,
+    project_root_relpath: str
+) -> str:
     """Generate Terraform module block using kinesis_event_flow."""
     shards = stream_cfg.get('shards', 1)
     retention = stream_cfg.get('retention_hours', 24)
@@ -102,7 +128,7 @@ def generate_stream_module(stream_name: str, stream_cfg: dict, consumer_cfg: dic
 # =============================================================================
 
 module "{stream_name}_events" {{
-  source = "../../modules/kinesis_event_flow"
+  source = "{platform_modules_relpath}/kinesis_event_flow"
 
   event_type  = "{stream_name}"
   environment = var.environment
@@ -113,7 +139,7 @@ module "{stream_name}_events" {{
   enable_enhanced_monitoring = {str(enhanced).lower()}
 
   # Lambda processor configuration
-  lambda_source_path = "${{path.module}}/../../{source}"
+  lambda_source_path = "${{path.module}}/{project_root_relpath}/{source}"
   lambda_handler     = "handler.process_event"
   lambda_runtime     = "python3.11"
   lambda_memory_size = {memory}
@@ -133,7 +159,13 @@ module "{stream_name}_events" {{
 '''
 
 
-def generate_additional_consumer(name: str, cfg: dict, env: str, streams: dict) -> str:
+def generate_additional_consumer(
+    name: str, 
+    cfg: dict, 
+    env: str, 
+    streams: dict,
+    project_root_relpath: str
+) -> str:
     """Generate inline Terraform for additional/multi-stream consumers."""
     source = cfg.get('source', f'lambda/{name}')
     memory = cfg.get('memory', 256)
@@ -194,7 +226,7 @@ resource "aws_lambda_event_source_mapping" "{name}_{stream}" {{
 
 data "archive_file" "{name}" {{
   type        = "zip"
-  source_dir  = "${{path.module}}/../../{source}"
+  source_dir  = "${{path.module}}/{project_root_relpath}/{source}"
   output_path = "${{path.module}}/.terraform/tmp/{name}-lambda.zip"
 }}
 
@@ -284,7 +316,12 @@ resource "aws_lambda_function" "{name}" {{
 {event_sources}'''
 
 
-def generate_api_gateway(config: dict, streams: dict, env: str) -> str:
+def generate_api_gateway(
+    config: dict, 
+    streams: dict, 
+    env: str,
+    platform_modules_relpath: str
+) -> str:
     """Generate API Gateway configuration using module outputs."""
     gw = config.get('api_gateway', {})
     name = gw.get('name', 'events-ingestion')
@@ -309,7 +346,7 @@ def generate_api_gateway(config: dict, streams: dict, env: str) -> str:
 # =============================================================================
 
 module "api_gateway" {{
-  source = "../../modules/api_gateway"
+  source = "{platform_modules_relpath}/api_gateway"
 
   name        = "{name}"
   environment = var.environment
@@ -385,7 +422,6 @@ def identify_primary_consumers(streams: dict, consumers: dict) -> tuple[dict, di
     primary = {}  # stream_name -> consumer_config
     additional = {}  # consumer_name -> consumer_config
     
-    # First pass: find exact matches for primary processors
     for consumer_name, consumer_cfg in consumers.items():
         stream_list = consumer_cfg.get('streams', [consumer_cfg.get('stream')])
         
@@ -402,27 +438,40 @@ def identify_primary_consumers(streams: dict, consumers: dict) -> tuple[dict, di
             if stream not in primary:
                 primary[stream] = consumer_cfg
             else:
-                # Stream already has a primary, this is additional
                 additional[consumer_name] = consumer_cfg
         else:
-            # Not a primary processor pattern
             additional[consumer_name] = consumer_cfg
     
     return primary, additional
 
 
-def generate(config_path: str, env: str) -> str:
+def generate(
+    config_path: Path, 
+    env: str, 
+    platform_path: Path,
+    project_path: Path
+) -> str:
     """Generate complete Terraform configuration from YAML."""
     with open(config_path) as f:
         config = yaml.safe_load(f)
     
     streams = config.get('streams', {})
     consumers = config.get('consumers', {})
+    project_name = config.get('project_name', project_path.name)
+    
+    # Compute relative paths from __generated__/{env}/ to:
+    # 1. Platform modules directory
+    # 2. Project root (for lambda source)
+    generated_dir = project_path / '__generated__' / env
+    platform_modules = platform_path / 'modules'
+    
+    platform_modules_relpath = compute_relative_path(generated_dir, platform_modules)
+    project_root_relpath = compute_relative_path(generated_dir, project_path)
     
     # Identify primary vs additional consumers
     primary_consumers, additional_consumers = identify_primary_consumers(streams, consumers)
     
-    parts = [generate_header(config, env)]
+    parts = [generate_header(config, env, project_name)]
     
     # Generate stream modules (with primary consumers)
     for stream_name, stream_cfg in streams.items():
@@ -432,14 +481,20 @@ def generate(config_path: str, env: str) -> str:
             'timeout': 30,
             'batch_size': 100
         })
-        parts.append(generate_stream_module(stream_name, stream_cfg, consumer_cfg, env))
+        parts.append(generate_stream_module(
+            stream_name, stream_cfg, consumer_cfg, env,
+            platform_modules_relpath, project_root_relpath
+        ))
     
-    # Generate additional consumers (multi-stream or extra consumers)
+    # Generate additional consumers
     for consumer_name, consumer_cfg in additional_consumers.items():
-        parts.append(generate_additional_consumer(consumer_name, consumer_cfg, env, streams))
+        parts.append(generate_additional_consumer(
+            consumer_name, consumer_cfg, env, streams,
+            project_root_relpath
+        ))
     
     # Generate API Gateway
-    parts.append(generate_api_gateway(config, streams, env))
+    parts.append(generate_api_gateway(config, streams, env, platform_modules_relpath))
     
     # Generate outputs
     parts.append(generate_outputs(streams, list(additional_consumers.keys())))
@@ -448,14 +503,20 @@ def generate(config_path: str, env: str) -> str:
 
 
 def main():
+    # Determine platform path from script location
+    script_path = Path(__file__).resolve()
+    platform_path = script_path.parent  # kinesis-infra directory
+    
     parser = argparse.ArgumentParser(
-        description='Generate Terraform from YAML config',
+        description='Generate Terraform from YAML config (Platform Generator)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Examples:
-  python generate.py config.yaml dev      # Creates dev/main.tf
-  python generate.py config.yaml prod     # Creates prod/main.tf
-  python generate.py config.yaml staging --dry-run  # Preview only
+        epilog=f'''
+Platform location: {platform_path}
+
+Examples (run from your project directory):
+  python {script_path} config.yaml dev
+  python {script_path} config.yaml prod
+  python {script_path} config.yaml staging --dry-run
         '''
     )
     parser.add_argument('config', help='Path to config.yaml')
@@ -463,20 +524,26 @@ Examples:
                         help='Target environment')
     parser.add_argument('--dry-run', action='store_true',
                         help='Print to stdout instead of writing file')
+    parser.add_argument('--project-dir', type=Path, default=Path.cwd(),
+                        help='Project directory (default: current directory)')
     args = parser.parse_args()
     
-    if not Path(args.config).exists():
-        print(f"Error: Config file '{args.config}' not found", file=sys.stderr)
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = args.project_dir / config_path
+    
+    if not config_path.exists():
+        print(f"Error: Config file '{config_path}' not found", file=sys.stderr)
         sys.exit(1)
     
     try:
-        tf = generate(args.config, args.env)
+        tf = generate(config_path, args.env, platform_path, args.project_dir)
         
         if args.dry_run:
             print(tf)
         else:
             # Create __generated__/env directory and write main.tf
-            generated_dir = Path('__generated__') / args.env
+            generated_dir = args.project_dir / '__generated__' / args.env
             generated_dir.mkdir(parents=True, exist_ok=True)
             
             output_path = generated_dir / 'main.tf'
@@ -485,13 +552,15 @@ Examples:
             
             print(f"Generated {output_path}", file=sys.stderr)
             print(f"\nNext steps:", file=sys.stderr)
-            print(f"  cd __generated__/{args.env}", file=sys.stderr)
+            print(f"  cd {generated_dir}", file=sys.stderr)
             print(f"  terraform init", file=sys.stderr)
             print(f"  terraform plan", file=sys.stderr)
             print(f"  terraform apply", file=sys.stderr)
             
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
