@@ -1,0 +1,6 @@
+outs:
+- md5: 13814fd8dc24604ed0791227d61644c5.dir
+  size: 45776999
+  nfiles: 7
+  hash: md5
+  path: bert-lite
