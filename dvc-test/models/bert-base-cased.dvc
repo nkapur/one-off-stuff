@@ -1,0 +1,6 @@
+outs:
+- md5: 9f32006908d5e1f7cf04231b450e7a35.dir
+  size: 435755784
+  nfiles: 1
+  hash: md5
+  path: bert-base-cased
