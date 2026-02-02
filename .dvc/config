@@ -1,0 +1,6 @@
+[core]
+    remote = local_limit
+['remote "local"']
+    url = /tmp/dvc-test
+['remote "local_limit"']
+    url = /Volumes/DVC_Test_Disk/dvc_storage
